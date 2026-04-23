@@ -135,8 +135,9 @@ class Gemma4RMSNorm(Gemma3nRMSNorm):
 class Gemma4AudioRelPositionalEncoding(nn.Module):
     """Sinusoidal relative positional encoding for the audio encoder.
 
-    Produces position embeddings of shape [1, 2*context_size - 1, hidden_size] with
-    concatenated [sin..., cos...] layout matching the original Gemma4 convention.
+    Produces position embeddings of shape
+    [1, attention_context_left + attention_context_right, hidden_size]
+    with concatenated [sin..., cos...] layout matching the original Gemma4 convention.
     """
 
     inv_timescales: torch.Tensor
@@ -144,9 +145,10 @@ class Gemma4AudioRelPositionalEncoding(nn.Module):
     def __init__(self, config: Gemma4AudioConfig):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.context_size = (
-            config.attention_chunk_size + config.attention_context_left - 1 + config.attention_context_right
-        )
+        self.max_past_horizon = config.attention_context_left - 1
+        self.max_future_horizon = config.attention_context_right
+        self.position_length = config.attention_context_left + config.attention_context_right
+
         min_timescale = 1.0
         max_timescale = 10000.0
         num_timescales = self.hidden_size // 2
@@ -156,7 +158,12 @@ class Gemma4AudioRelPositionalEncoding(nn.Module):
 
     @torch.no_grad()
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        position_ids = torch.arange(12, -1, -1, device=hidden_states.device)
+        position_ids = torch.arange(
+            self.max_past_horizon,
+            -self.max_future_horizon - 1,
+            -1,
+            device=hidden_states.device,
+        )
         position_ids = position_ids[..., None]
         scaled_time = position_ids * self.inv_timescales.to(device=hidden_states.device)
         pos_embed = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=-1)
